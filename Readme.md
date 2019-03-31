@@ -1,7 +1,7 @@
 
 # Description
 
-Spark job example processing NYC taxi events. The job takes 4 arguments:
+Spark pipeline processing NYC taxi events to identify best zones for taxi riders depending on day and hour. The job takes 4 arguments:
 * The yellow NYC taxi rides source (can be the official NYC taxi bucket)
 * The green NYC taxi rides source (can be the official NYC taxi bucket)
 * The taxi zone referential data that will be joined with taxi rides
@@ -25,3 +25,10 @@ The job follows the data format provided by 2017 and 2018 NYC taxi rides
 # Deployment
 
 
+
+# TODO
+
+add bootstrap action to upload jar in Livy
+change livy submit job
+split job in two mains
+cicd pipeline to s3 bucket

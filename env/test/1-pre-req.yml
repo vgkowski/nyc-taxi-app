@@ -1,0 +1,182 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation Secret Provider
+
+Parameters:
+  S3BucketPrefix:
+    Type: String
+    Default: 'binxio-public'
+  CFNCustomProviderZipFileName:
+    Type: String
+    Default: 'lambdas/cfn-secret-provider-0.13.3.zip'
+
+###### custom resource for key pair
+Resources:
+  LambdaPolicy:
+    Type: AWS::IAM::Policy
+    DependsOn:
+      - LambdaRole
+    Properties:
+      PolicyName: CFNCustomSecretProviderPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - iam:CreateAccessKey
+              - iam:DeleteAccessKey
+              - iam:UpdateAccessKey
+              - ssm:PutParameter
+              - ssm:GetParameter
+              - ssm:DeleteParameter
+              - ec2:ImportKeyPair
+              - ec2:DeleteKeyPair
+              - secretsmanager:DeleteSecret
+              - secretsmanager:CreateSecret
+              - secretsmanager:UpdateSecret
+            Effect: Allow
+            Resource:
+              - '*'
+          - Action:
+              - kms:Decrypt
+            Effect: Allow
+            Resource:
+              - !GetAtt 'Key.Arn'
+          - Action:
+              - logs:*
+            Effect: Allow
+            Resource: arn:aws:logs:*:*:*
+      Roles:
+        - !Ref 'LambdaRole'
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action:
+              - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+  Key:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: used for encryption of secrets in CloudFormation templates
+      Enabled: True
+      EnableKeyRotation: True
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: 'enable iam permissions'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+
+  KeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: alias/cmk/cfn-secrets
+      TargetKeyId: !GetAtt 'Key.Arn'
+
+  CFNSecretProvider:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - LambdaRole
+    Properties:
+      Description: CloudFormation Custom:Secret implementation
+      Code:
+        S3Bucket: !Sub '${S3BucketPrefix}-${AWS::Region}'
+        S3Key: !Ref 'CFNCustomProviderZipFileName'
+      FunctionName: 'binxio-cfn-secret-provider'
+      Handler: secrets.handler
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt 'LambdaRole.Arn'
+      Runtime: python3.6
+
+  ###### macro for random string
+  TransformFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import traceback
+          import string
+          import random
+
+          def random_string(size=6):
+            return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(size))
+
+          def handler(event, context):
+              response = {
+                  "requestId": event["requestId"],
+                  "status": "success"
+              }
+              params = event.get("params", {})
+              operation = params.get("Operation", "upper")
+              number = int(params.get("Number", 6))
+              no_param_string_funcs = ["upper", "lower"]
+
+              rs = random_string(number)
+              if operation == "upper":
+                  response["fragment"] = rs.upper()
+              elif operation == "lower":
+                  response["fragment"] = rs.lower()
+              else:
+                  response["status"] = "failure"
+
+              return response
+
+      Handler: index.handler
+      Runtime: python3.6
+      Role: !GetAtt TransformExecutionRole.Arn
+  TransformExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: ['logs:*']
+                Resource: 'arn:aws:logs:*:*:*'
+  TransformFunctionPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: "lambda:InvokeFunction"
+      FunctionName: !GetAtt TransformFunction.Arn
+      Principal: "cloudformation.amazonaws.com"
+  Transform:
+    Type: AWS::CloudFormation::Transform
+    Properties:
+      Name: !Sub "${AWS::AccountId}::RandomString"
+      Description: "Generates a random string"
+      RoutingTable:
+        '*': 0_1
+      Versions:
+        - VersionName: 0_1
+          Description: "Version 0_1 of the RandomString Generator"
+          FunctionName: !GetAtt TransformFunction.Arn
+      ExecutionPolicy:
+        Version: 2012-10-17
+        Id: AllowOtherAccountPolicy
+        Statement:
+          - Sid: AllowExecution
+            Effect: Allow
+            Principal:
+              AWS: !Sub '${AWS::AccountId}'
+            Action: "cloudformation:CreateChangeSet"
+            Resource: !Sub "arn:*:cloudformation:${AWS::Region}:${AWS::AccountId}:transform/RandomString"
