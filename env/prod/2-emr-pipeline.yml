@@ -149,11 +149,15 @@ Resources:
     Properties:
       VpcId: !Ref emrVpc
       GroupDescription: Security group for Lambda function
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 8998
-          ToPort: 8998
-          CidrIp: 0.0.0.0/0
+
+  lambdaSecurityGroupIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref lambdaSecurityGroup
+      IpProtocol: tcp
+      FromPort: 8998
+      ToPort: 8998
+      SourceSecurityGroupId: !Ref lambdaSecurityGroup
 
   # The EMR cluster supporting notebook on Master node
   emrCluster:
