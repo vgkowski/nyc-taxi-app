@@ -30,5 +30,4 @@ The job follows the data format provided by 2017 and 2018 NYC taxi rides
 
 add bootstrap action to upload jar in Livy
 change livy submit job
-split job in two mains
 cicd pipeline to s3 bucket

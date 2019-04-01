@@ -512,13 +512,9 @@ Resources:
                         - MasterPublicDNS
                     - ":8998/batches'"
               - "  payload = {"
-              - Fn::Join:
-                  - ''
-                  - - "    'file' : '"
-                    - Ref: S3RootPath
-                    - "/emr-step-functions/spark-taxi.jar',"
-              - "    'className' : 'com.example.MilesPerRateCode',"
-              - "    'args' : [event.get('rootPath')]"
+              - "    'file' : 's3://aws-data-lake-workshop/emr-lab/emr-lab-assembly-0.1.jar',"
+              - "    'className' : 'RawRide',"
+              - "    'args' : [event.get('yellowSource'), event.get('greenSource'),event.get('zonesSource'),event.get('rawRidesTarget')]"
               - "  }"
               - "  res = requests.post(url, data = json.dumps(payload), headers = headers,
               verify = False)"
@@ -535,7 +531,7 @@ Resources:
           - Ref: emrSubnet
 
   # The Lambda function to submit the value ride job
-  valueRideJobSubmitFunction:
+  valueZoneJobSubmitFunction:
     Type: AWS::Lambda::Function
     Properties:
       Handler: index.lambda_handler
@@ -559,13 +555,9 @@ Resources:
                         - MasterPublicDNS
                     - ":8998/batches'"
               - "  payload = {"
-              - Fn::Join:
-                  - ''
-                  - - "    'file' : '"
-                    - Ref: S3RootPath
-                    - "/emr-step-functions/spark-taxi.jar',"
-              - "    'className' : 'com.example.RateCodeStatus',"
-              - "    'args' : [event.get('rootPath')]"
+              - "    'file' : 's3://aws-data-lake-workshop/emr-lab/emr-lab-assembly-0.1.jar',"
+              - "    'className' : 'ValueZone',"
+              - "    'args' : [event.get('rawRidesTarget'),event.get('valueZonesTarget')]"
               - "  }"
               - "  res = requests.post(url, data = json.dumps(payload), headers = headers,
               verify = False)"
@@ -579,7 +571,7 @@ Resources:
         SecurityGroupIds:
           - Ref: lambdaSecurityGroup
         SubnetIds:
-          - Ref: emrVpc
+          - Ref: emrSubnet
 
   # The step function to orchestrate the pipeline
   emrPipelineStateMachine:
@@ -626,7 +618,7 @@ Resources:
             - '           "Choices": [{'
             - '               "Variable": "$.jobStatus",'
             - '               "StringEquals": "success",'
-            - '               "Next": "valueRide Job"'
+            - '               "Next": "valueZone Job"'
             - "           },{"
             - '               "Variable": "$.jobStatus",'
             - '               "StringEquals": "dead",'
@@ -640,24 +632,24 @@ Resources:
             - '           "Cause": "rawRide job job did not complete successfully.
              Please check logs."'
             - "       },"
-            - '       "valueRide Job": {'
+            - '       "valueZone Job": {'
             - '           "Type": "Task",'
             - Fn::Join:
                 - ''
                 - - '           "Resource": "'
                   - Fn::GetAtt:
-                      - valueRideJobSubmitFunction
+                      - valueZoneJobSubmitFunction
                       - Arn
                   - "\","
             - '           "ResultPath": "$.jobId",'
-            - '           "Next": "Wait for valueRide job to complete"'
+            - '           "Next": "Wait for valueZone job to complete"'
             - "       },"
-            - '       "Wait for valueRide job to complete": {'
+            - '       "Wait for valueZone job to complete": {'
             - '           "Type": "Wait",'
             - '           "Seconds": 60,'
-            - '           "Next": "Query valueRide job status"'
+            - '           "Next": "Query valueZone job status"'
             - "       },"
-            - '       "Query valueRide job status": {'
+            - '       "Query valueZone job status": {'
             - '           "Type": "Task",'
             - Fn::Join:
                 - ''
@@ -666,29 +658,29 @@ Resources:
                       - sparkJobStatusFunction
                       - Arn
                   - "\","
-            - '           "Next": "valueRide job complete?",'
+            - '           "Next": "valueZone job complete?",'
             - '           "ResultPath": "$.jobStatus"'
             - "       },"
-            - '       "valueRide job complete?": {'
+            - '       "valueZone job complete?": {'
             - '       "Type": "Choice",'
             - '       "Choices": [{'
             - '               "Variable": "$.jobStatus",'
             - '               "StringEquals": "success",'
-            - '               "Next": "valueRide job finished"'
+            - '               "Next": "valueZone job finished"'
             - "           },{"
             - '               "Variable": "$.jobStatus",'
             - '               "StringEquals": "dead",'
-            - '               "Next": "valueRide job failed"'
+            - '               "Next": "valueZone job failed"'
             - "           }],"
-            - '           "Default": "Wait for valueRide job to complete"'
+            - '           "Default": "Wait for valueZone job to complete"'
             - "       },"
-            - '       "valueRide job failed": {'
+            - '       "valueZone job failed": {'
             - '           "Type": "Fail",'
-            - '           "Error": "valueRide Job",'
-            - '           "Cause": "valueRide job did not complete successfully.
+            - '           "Error": "valueZone Job",'
+            - '           "Cause": "valueZone job did not complete successfully.
              Please check logs."'
             - "       },"
-            - '       "valueRide job finished": {'
+            - '       "valueZone job finished": {'
             - '           "Type": "Pass",'
             - '           "End": true'
             - "       }"
