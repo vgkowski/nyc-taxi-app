@@ -175,7 +175,7 @@ Resources:
           Market: ON_DEMAND
           Name: Master node
         CoreInstanceGroup:
-          InstanceCount: 6
+          InstanceCount: 5
           InstanceType: m5.2xlarge
           Market: ON_DEMAND
           Name: Core instance
