@@ -189,6 +189,10 @@ Resources:
         - Name: Hadoop
         - Name: Spark
         - Name: Livy
+      Configurations:
+        - Classification: spark
+          ConfigurationProperties:
+            maximizeResourceAllocation: 'true'
       JobFlowRole: !Ref emrInstanceProfile
       ServiceRole: !Ref emrServiceRole
       ReleaseLabel: emr-5.22.0

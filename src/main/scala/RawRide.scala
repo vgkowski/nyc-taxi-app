@@ -30,6 +30,7 @@ object RawRide {
               zones = args(2).split(",").toList,
               target = args(3)
               )
+        session.stop()
         } catch {
             case ex: Exception =>
               logger.error(ex.getMessage)
@@ -94,7 +95,5 @@ object RawRide {
           .write
           .partitionBy("year","month")
           .parquet(target)
-
-        sparkSession.stop()
     }
 }
