@@ -171,12 +171,12 @@ Resources:
       Instances:
         MasterInstanceGroup:
           InstanceCount: 1
-          InstanceType: m4.large
+          InstanceType: m5.xlarge
           Market: ON_DEMAND
           Name: Master node
         CoreInstanceGroup:
-          InstanceCount: 4
-          InstanceType: m4.large
+          InstanceCount: 6
+          InstanceType: m5.2xlarge
           Market: ON_DEMAND
           Name: Core instance
         Ec2SubnetId: !Ref emrSubnet
