@@ -27,6 +27,7 @@ object ValueZone {
         rawRides = args(0),
         valueZonesTarget = args(1)
       )
+      session.stop()
     } catch {
       case ex: Exception =>
         logger.error(ex.getMessage)
@@ -43,8 +44,6 @@ object ValueZone {
 
     val allEventsWithZone = sparkSession.read
       .parquet(rawRides)
-      .select("pickup_datetime","minute_rate","taxiColor","LocationID","Borough", "Zone")
-      .cache
 
     val zoneAttractiveness = allEventsWithZone
       .groupBy($"LocationID", date_trunc("hour",$"pickup_datetime") as "pickup_hour")
@@ -59,7 +58,5 @@ object ValueZone {
       .repartition(1)
       .sortWithinPartitions($"pickup_hour")
       .write.parquet(valueZonesTarget)
-
-    sparkSession.stop()
   }
 }

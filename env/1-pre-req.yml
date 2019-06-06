@@ -10,93 +10,7 @@ Parameters:
     Type: String
     Default: 'lambdas/cfn-secret-provider-0.13.3.zip'
 
-###### custom resource for key pair
 Resources:
-  LambdaPolicy:
-    Type: AWS::IAM::Policy
-    DependsOn:
-      - LambdaRole
-    Properties:
-      PolicyName: CFNCustomSecretProviderPolicy
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Action:
-              - iam:CreateAccessKey
-              - iam:DeleteAccessKey
-              - iam:UpdateAccessKey
-              - ssm:PutParameter
-              - ssm:GetParameter
-              - ssm:DeleteParameter
-              - ec2:ImportKeyPair
-              - ec2:DeleteKeyPair
-              - secretsmanager:DeleteSecret
-              - secretsmanager:CreateSecret
-              - secretsmanager:UpdateSecret
-            Effect: Allow
-            Resource:
-              - '*'
-          - Action:
-              - kms:Decrypt
-            Effect: Allow
-            Resource:
-              - !GetAtt 'Key.Arn'
-          - Action:
-              - logs:*
-            Effect: Allow
-            Resource: arn:aws:logs:*:*:*
-      Roles:
-        - !Ref 'LambdaRole'
-  LambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Action:
-              - sts:AssumeRole
-            Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-  Key:
-    Type: AWS::KMS::Key
-    Properties:
-      Description: used for encryption of secrets in CloudFormation templates
-      Enabled: True
-      EnableKeyRotation: True
-      KeyPolicy:
-        Version: 2012-10-17
-        Id: 'enable iam permissions'
-        Statement:
-          - Sid: Enable IAM User Permissions
-            Effect: Allow
-            Principal:
-              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
-            Action: kms:*
-            Resource: '*'
-
-  KeyAlias:
-    Type: AWS::KMS::Alias
-    Properties:
-      AliasName: alias/cmk/cfn-secrets
-      TargetKeyId: !GetAtt 'Key.Arn'
-
-  CFNSecretProvider:
-    Type: AWS::Lambda::Function
-    DependsOn:
-      - LambdaRole
-    Properties:
-      Description: CloudFormation Custom:Secret implementation
-      Code:
-        S3Bucket: !Sub '${S3BucketPrefix}-${AWS::Region}'
-        S3Key: !Ref 'CFNCustomProviderZipFileName'
-      FunctionName: 'binxio-cfn-secret-provider'
-      Handler: secrets.handler
-      MemorySize: 128
-      Timeout: 30
-      Role: !GetAtt 'LambdaRole.Arn'
-      Runtime: python3.6
 
   ###### macro for random string
   TransformFunction:
@@ -134,6 +48,7 @@ Resources:
       Handler: index.handler
       Runtime: python3.6
       Role: !GetAtt TransformExecutionRole.Arn
+
   TransformExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -153,12 +68,14 @@ Resources:
               - Effect: Allow
                 Action: ['logs:*']
                 Resource: 'arn:aws:logs:*:*:*'
+
   TransformFunctionPermissions:
     Type: AWS::Lambda::Permission
     Properties:
       Action: "lambda:InvokeFunction"
       FunctionName: !GetAtt TransformFunction.Arn
       Principal: "cloudformation.amazonaws.com"
+
   Transform:
     Type: AWS::CloudFormation::Transform
     Properties:

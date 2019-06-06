@@ -5,22 +5,24 @@ import org.scalatest.FunSuite
 import scala.reflect.io.Path
 import scala.util.Try
 
-class ValueZoneSpec extends FunSuite with DataFrameSuiteBase with SharedSparkContext {
+class MergeZoneRideSpec extends FunSuite with DataFrameSuiteBase with SharedSparkContext {
 
   override def beforeAll(): Unit = {
     super[SharedSparkContext].beforeAll()
     SparkSessionProvider._sparkSession = SparkSession.builder().appName("test").master("local[2]").getOrCreate()
   }
 
-  test("valueZones results test") {
-    ValueZone.runJob(spark,
-      "src/test/resources/mergeZoneRides",
-      "src/test/resources/results/valueZones"
+  test("mergeZoneRides results test") {
+    MergeZoneRide.runJob(spark,
+      List("src/test/resources/yellowRawRides/"),
+      List("src/test/resources/greenRawRides/"),
+      List("src/test/resources/taxi_zone_lookup.csv"),
+      "src/test/resources/results/mergeZone"
     )
 
-    val results = spark.read.parquet("src/test/resources/results/valueZones")
+    val results = spark.read.parquet("src/test/resources/results/mergeZone")
 
-    val referenceResults = spark.read.parquet("src/test/resources/valueZones/")
+    val referenceResults = spark.read.parquet("src/test/resources/mergeZoneRides/")
 
     assertDataFrameEquals(results, referenceResults)
   }

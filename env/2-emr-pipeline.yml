@@ -1,8 +1,18 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: Cloudformation Template to spin up prod pipeline for EMR lab
 
-Resources:
+Parameters:
+  masterNodeType:
+    Type: String
+    Default: m5.xlarge
+  workerNodeType:
+    Type: String
+    Default: m5.2xlarge
+  workerNodeCount:
+    Type: String
+    Default: 4
 
+Resources:
   # the random prefix used for naming all resources
   randomID:
     Type: "AWS::SSM::Parameter"
@@ -15,29 +25,6 @@ Resources:
           Parameters:
             Operation: lower
             Number: 6
-
-  # The private key, keypair for EMR cluster and Parameter Store to retrieve the private key
-  emrPrivateKey:
-    Type: Custom::RSAKey
-    Properties:
-      Name:
-        Fn::Join:
-          - ''
-          - - /emr-lab/private-key-
-            - !GetAtt randomID.Value
-      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-secret-provider
-
-  emrKeyPair:
-    Type: Custom::KeyPair
-    DependsOn: emrPrivateKey
-    Properties:
-      Name:
-        Fn::Join:
-          - ''
-          - - emrLabKeyPair-
-            - !GetAtt randomID.Value
-      PublicKeyMaterial: !GetAtt emrPrivateKey.PublicKey
-      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:binxio-cfn-secret-provider
 
   # The network infrastructure for the EMR cluster (public subnet)
   emrInternetGateway:
@@ -171,12 +158,12 @@ Resources:
       Instances:
         MasterInstanceGroup:
           InstanceCount: 1
-          InstanceType: m5.xlarge
+          InstanceType: !Ref masterNodeType
           Market: ON_DEMAND
           Name: Master node
         CoreInstanceGroup:
-          InstanceCount: 5
-          InstanceType: m5.2xlarge
+          InstanceCount: !Ref workerNodeCount
+          InstanceType: !Ref workerNodeType
           Market: ON_DEMAND
           Name: Core instance
         Ec2SubnetId: !Ref emrSubnet

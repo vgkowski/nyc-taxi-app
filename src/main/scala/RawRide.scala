@@ -1,19 +1,20 @@
 import org.apache.log4j.Logger
 import org.apache.log4j.Level
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.sql.functions._
 
 
 object RawRide {
+
     private val logger = Logger.getLogger(this.getClass)
 
     def main(args: Array[String]) {
 
       // check arguments
-      if (args.length != 4)
+      if (args.length != 3)
         throw new IllegalArgumentException(
           "Parameters : "+
-          "<yellowSource> <greenSource> <zonesSource> <rawRidesTarget> "+
+          "<source> <color> <rawRidesTarget> "+
           "(multiple source paths can be provided in the same string, separated by a coma"
         )
 
@@ -25,10 +26,9 @@ object RawRide {
 
       try {
         runJob(sparkSession = session,
-              yellow = args(0).split(",").toList,
-              green = args(1).split(",").toList,
-              zones = args(2).split(",").toList,
-              target = args(3)
+              source = args(0).split(",").toList,
+              color = args(1),
+              target = args(2)
               )
         session.stop()
         } catch {
@@ -38,62 +38,56 @@ object RawRide {
         }
     }
 
-    def runJob(sparkSession :SparkSession,yellow :List[String], green :List[String], zones :List[String], target :String) = {
+    def yellowEvents(spark: SparkSession)(df :DataFrame): DataFrame ={
+      import spark.implicits._
 
-        logger.info("Execution started")
+      df.filter(col("tpep_pickup_datetime").gt("2017"))
+        .filter(col("tpep_pickup_datetime").lt("2019"))
+        .withColumn("duration", unix_timestamp($"tpep_dropoff_datetime").minus(unix_timestamp($"tpep_pickup_datetime")))
+        .withColumn("minute_rate",$"total_amount".divide($"duration") * 60)
+        .withColumnRenamed("tpep_pickup_datetime","pickup_datetime")
+    }
 
-        import sparkSession.implicits._
+    def greenEvents(spark : SparkSession)(df: DataFrame): DataFrame ={
+      import spark.implicits._
 
-        val yellowEvents = sparkSession.read
-          .option("header","true")
-          .option("inferSchema", "true")
-          .option("enforceSchema", "false")
-          .option("timeStampFormat", "yyyy-MM-dd HH:mm:ss")
-          .option("columnNameOfCorruptRecord", "error")
-          .csv(yellow: _*)
-          .filter(col("tpep_pickup_datetime").gt("2017"))
-          .filter(col("tpep_pickup_datetime").lt("2019"))
-          .withColumn("duration", unix_timestamp($"tpep_dropoff_datetime").minus(unix_timestamp($"tpep_pickup_datetime")))
-          .withColumn("minute_rate",$"total_amount".divide($"duration") * 60)
-          .withColumnRenamed("tpep_pickup_datetime","pickup_datetime")
-          .select("pickup_datetime","minute_rate","PULocationID","total_amount")
-          .withColumn("taxiColor",lit("yellow"))
+      df.filter(col("lpep_pickup_datetime").gt("2017"))
+        .filter(col("lpep_pickup_datetime").lt("2019"))
+        .withColumn("duration", unix_timestamp($"lpep_dropoff_datetime").minus(unix_timestamp($"lpep_pickup_datetime")))
+        .withColumn("minute_rate",$"total_amount".divide($"duration") * 60)
+        .withColumnRenamed("lpep_pickup_datetime","pickup_datetime")
+    }
 
-        val greenEvents = sparkSession.read
-          .option("header","true")
-          .option("inferSchema", "true")
-          .option("enforceSchema", "false")
-          .option("timeStampFormat", "yyyy-MM-dd HH:mm:ss")
-          .option("columnNameOfCorruptRecord", "error")
-          .csv(green: _*)
-          .filter(col("lpep_pickup_datetime").gt("2017"))
-          .filter(col("lpep_pickup_datetime").lt("2019"))          .withColumn("duration", unix_timestamp($"lpep_dropoff_datetime").minus(unix_timestamp($"lpep_pickup_datetime")))
-          .withColumn("minute_rate",$"total_amount".divide($"duration") * 60)
-          .withColumnRenamed("lpep_pickup_datetime","pickup_datetime")
-          .select("pickup_datetime","minute_rate","PULocationID","total_amount")
-          .withColumn("taxiColor",lit("green"))
+    def processEvents(spark: SparkSession,color :String)(df :DataFrame): DataFrame ={
+      color match{
+        case "yellow" => yellowEvents(spark)(df)
+        case "green" => greenEvents(spark)(df)
+      }
+    }
 
-        val zonesInfo = sparkSession.read
-            .option("header","true")
-            .option("inferSchema", "true")
-            .option("enforceSchema", "false")
-            .option("columnNameOfCorruptRecord", "error")
-            .csv(zones: _*)
+  def runJob(sparkSession :SparkSession,source :List[String], color :String, target :String) = {
 
-        val allEventsWithZone = greenEvents
-          .union(yellowEvents)
-          .join(zonesInfo,$"PULocationID" === $"LocationID")
-          .select("pickup_datetime","minute_rate","taxiColor","LocationID","Borough", "Zone")
-          .cache
+      logger.info("Execution started")
 
-        val rawQuery = allEventsWithZone
-          .withColumn("year", year($"pickup_datetime"))
-          .withColumn("month", month($"pickup_datetime"))
-          .withColumn("day", dayofmonth($"pickup_datetime"))
-          .repartition($"year",$"month")
-          .sortWithinPartitions("day")
-          .write
-          .partitionBy("year","month")
-          .parquet(target)
+      import sparkSession.implicits._
+
+      val events = sparkSession.read
+        .option("header","true")
+        .option("inferSchema", "true")
+        .option("enforceSchema", "false")
+        .option("timeStampFormat", "yyyy-MM-dd HH:mm:ss")
+        .option("columnNameOfCorruptRecord", "error")
+        .csv(source: _*)
+        .transform(processEvents(sparkSession,color))
+
+      val rawQuery = events
+        .withColumn("year", year($"pickup_datetime"))
+        .withColumn("month", month($"pickup_datetime"))
+        .withColumn("day", dayofmonth($"pickup_datetime"))
+        .repartition($"year",$"month")
+        .sortWithinPartitions("day")
+        .write
+        .partitionBy("year","month")
+        .parquet(target)
     }
 }

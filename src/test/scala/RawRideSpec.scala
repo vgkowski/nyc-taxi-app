@@ -12,23 +12,35 @@ class RawRideSpec extends FunSuite with DataFrameSuiteBase with SharedSparkConte
     SparkSessionProvider._sparkSession = SparkSession.builder().appName("test").master("local[2]").getOrCreate()
   }
 
-  test("full test") {
+  test("yellowRawRides results test") {
     RawRide.runJob(spark,
       List("src/test/resources/yellow_tripdata_sample.csv"),
-      List("src/test/resources/green_tripdata_sample.csv"),
-      List("src/test/resources/taxi_zone_lookup.csv"),
-      "src/test/resources/results"
+      "yellow",
+      "src/test/resources/results/yellow"
     )
 
-    val results = spark.read.parquet("src/test/resources/results/")
+    val results = spark.read.parquet("src/test/resources/results/yellow/")
 
-    val referenceResults = spark.read.parquet("src/test/resources/reference/")
+    val referenceResults = spark.read.parquet("src/test/resources/yellowRawRides/")
+
+    assertDataFrameEquals(results, referenceResults)
+  }
+
+  test("greenRawRides results test") {
+    RawRide.runJob(spark,
+      List("src/test/resources/green_tripdata_sample.csv"),
+      "green",
+      "src/test/resources/results/green/"
+    )
+
+    val results = spark.read.parquet("src/test/resources/results/green/")
+
+    val referenceResults = spark.read.parquet("src/test/resources/greenRawRides/")
 
     assertDataFrameEquals(results, referenceResults)
   }
 
   override def afterAll(): Unit = {
     Try(Path("src/test/resources/results/").deleteRecursively)
-    spark.stop()
   }
 }
