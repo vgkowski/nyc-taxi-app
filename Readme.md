@@ -13,7 +13,7 @@ The job follows the data format provided by 2017 and 2018 NYC taxi rides
 
 ## Pre-requisite
 
-* Compatibility: Spark 2.4.0, Scala 2.11.12, Sbt 1.2.8
+* Compatibility: Spark 2.4.2, Scala 2.11.12, Sbt 1.2.8
 
 
 # Building

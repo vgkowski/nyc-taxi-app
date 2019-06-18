@@ -4,27 +4,114 @@ Description: Cloudformation Template to spin up prod pipeline for EMR lab
 Parameters:
   masterNodeType:
     Type: String
-    Default: m5.xlarge
+    Default: m5.large
   workerNodeType:
     Type: String
     Default: m5.2xlarge
   workerNodeCount:
     Type: String
-    Default: 4
+    Default: 5
 
 Resources:
-  # the random prefix used for naming all resources
+
+  # Cloud9 env for code review
+
+  cloud9Env:
+    Type: AWS::Cloud9::EnvironmentEC2
+    Properties:
+      AutomaticStopTimeMinutes: 20160
+      InstanceType: t2.micro
+
+  # Custom resource for generating a random ID to prefix all resources and avoid conflicts
+  RandomId:
+    Type: "AWS::CloudFormation::CustomResource"
+    Properties:
+      Operation: lower
+      Number: 6
+      ServiceToken: !GetAtt RandomStringFunction.Arn
+
+  RandomStringFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import traceback
+          import string
+          import random
+          import uuid
+          import json
+          import http.client
+          from urllib.parse import urlparse
+
+
+          def random_string():
+              return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+          def send_response(request, response):
+
+              if 'ResponseURL' in request and request['ResponseURL']:
+                  url = urlparse(request['ResponseURL'])
+                  print(url)
+                  if len(url.path) != 0:
+                      body = json.dumps(response)
+                      https = http.client.HTTPSConnection(url.hostname)
+                      https.request('PUT', url.path+'?'+url.query, body)
+
+              return response
+
+          def handler(event, context):
+              response = {
+                  'StackId': event['StackId'],
+                  'RequestId': event['RequestId'],
+                  'LogicalResourceId': event['LogicalResourceId'],
+                  'Status': 'SUCCESS'
+              }
+              print(event)
+
+              if 'PhysicalResourceId' in event:
+                  response['PhysicalResourceId'] = event['PhysicalResourceId']
+              else:
+                  response['PhysicalResourceId'] = str(uuid.uuid4())
+
+              if event['RequestType'] == 'Delete':
+                  return send_response(event, response)
+
+              rs = random_string()
+              response['Data']   = { 'RandomString': rs.lower() }
+              print(response)
+              return send_response(event,response)
+
+      Handler: index.handler
+      Runtime: python3.6
+      Role: !GetAtt RandomStringFunctionExecutionRole.Arn
+
+  RandomStringFunctionExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: ['logs:*']
+                Resource: 'arn:aws:logs:*:*:*'
+
+  # the random prefix used for naming all resources stored in SSM
   randomID:
     Type: "AWS::SSM::Parameter"
     Properties:
       Description: Random ID for prefixing automated.
       Type: String
-      Value:
-        Fn::Transform:
-          Name: RandomString
-          Parameters:
-            Operation: lower
-            Number: 6
+      Value: !GetAtt RandomId.RandomString
 
   # The network infrastructure for the EMR cluster (public subnet)
   emrInternetGateway:
@@ -58,7 +145,7 @@ Resources:
   emrSubnet:
     Type: AWS::EC2::Subnet
     Properties:
-      AvailabilityZone: eu-west-1a
+      AvailabilityZone: !Sub '${AWS::Region}a'
       VpcId: !Ref emrVpc
       CidrBlock: 10.0.1.0/16
       MapPublicIpOnLaunch: true
@@ -167,7 +254,6 @@ Resources:
           Market: ON_DEMAND
           Name: Core instance
         Ec2SubnetId: !Ref emrSubnet
-        Ec2KeyName: !GetAtt emrKeyPair.Name
         AdditionalMasterSecurityGroups:
           - !Ref lambdaSecurityGroup
         EmrManagedMasterSecurityGroup: !Ref emrMasterSecGroup
@@ -179,10 +265,27 @@ Resources:
       Configurations:
         - Classification: spark
           ConfigurationProperties:
-            maximizeResourceAllocation: 'true'
+            maximizeResourceAllocation: 'false'
+        - Classification: spark-defaults
+          ConfigurationProperties:
+            spark.executor.memory: '8G'
+            spark.driver.memory: '2G'
+            spark.dynamicAllocation.enabled: 'true'
+            spark.executor.cores: 2
+            spark.executor.instances: 12
+            spark.sql.shuffle.partitions: 100
+        - Classification: spark-hive-site
+          ConfigurationProperties:
+            hive.metastore.client.factory.class: 'com.amazonaws.glue.catalog.metastore.AWSGlueDataCatalogHiveClientFactory'
+        - Classification: yarn-site
+          ConfigurationProperties:
+            yarn.resourcemanager.scheduler.class: 'org.apache.hadoop.yarn.server.resourcemanager.scheduler.fair.FairScheduler'
+        - Classification: livy-conf
+          ConfigurationProperties:
+            livy.spark.deployMode: 'cluster'
       JobFlowRole: !Ref emrInstanceProfile
       ServiceRole: !Ref emrServiceRole
-      ReleaseLabel: emr-5.22.0
+      ReleaseLabel: emr-5.24.0
       VisibleToAllUsers: true
       LogUri:
         Fn::Join:
@@ -482,7 +585,7 @@ Resources:
         SubnetIds:
           - Ref: emrSubnet
 
-  # The Lambda function to submit the raw ride job
+  # The Lambda function to submit the raw ride processing job
   rawRideJobSubmitFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -506,10 +609,17 @@ Resources:
                         - emrCluster
                         - MasterPublicDNS
                     - ":8998/batches'"
+              - "  if event.get('rawRidesColor') == 'yellow':"
+              - "    shufflePart='80'"
+              - "    execNum='8'"
+              - "  else:"
+              - "    shufflePart='20'"
+              - "    execNum='2'"
               - "  payload = {"
-              - "    'file' : 's3://aws-data-lake-workshop/emr-lab/emr-lab-assembly-0.1.jar',"
+              - "    'file' : 's3://aws-data-lake-workshop/emr-module/emr-lab/emr-lab-assembly-1.0.jar',"
               - "    'className' : 'RawRide',"
-              - "    'args' : [event.get('yellowSource'), event.get('greenSource'),event.get('zonesSource'),event.get('rawRidesTarget')]"
+              - "    'args' : [event.get('rawRidesSource'), event.get('rawRidesColor'),event.get('rawRidesTarget')],"
+              - "    'conf' : {'spark.sql.shuffle.partitions': shufflePart ,'spark.executor.instances': execNum}"
               - "  }"
               - "  res = requests.post(url, data = json.dumps(payload), headers = headers,
               verify = False)"
@@ -525,7 +635,50 @@ Resources:
         SubnetIds:
           - Ref: emrSubnet
 
-  # The Lambda function to submit the value ride job
+  # The Lambda function to submit the merge zone with ride processing job
+  mergeZoneRideJobSubmitFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      Role:
+        Fn::GetAtt:
+          - lambdaStateMachineRole
+          - Arn
+      Code:
+        ZipFile:
+          Fn::Join:
+            - "\n"
+            - - from botocore.vendored import requests
+              - import json
+              - 'def lambda_handler(event, context):'
+              - '  headers = { "content-type": "application/json" }'
+              - Fn::Join:
+                  - ''
+                  - - "  url = 'http://"
+                    - Fn::GetAtt:
+                        - emrCluster
+                        - MasterPublicDNS
+                    - ":8998/batches'"
+              - "  payload = {"
+              - "    'file' : 's3://aws-data-lake-workshop/emr-module/emr-lab/emr-lab-assembly-1.0.jar',"
+              - "    'className' : 'MergeZoneRide',"
+              - "    'args' : [event.get('yellowRawRides'), event.get('greenRawRides'), event.get('zoneSource'),event.get('mergeZoneRides')]"
+              - "  }"
+              - "  res = requests.post(url, data = json.dumps(payload), headers = headers,
+              verify = False)"
+              - "  json_data = json.loads(res.text)"
+              - "  return json_data.get('id')"
+      Runtime: python3.6
+      Timeout: '60'
+      TracingConfig:
+        Mode: Active
+      VpcConfig:
+        SecurityGroupIds:
+          - Ref: lambdaSecurityGroup
+        SubnetIds:
+          - Ref: emrSubnet
+
+  # The Lambda function to submit the value zone job
   valueZoneJobSubmitFunction:
     Type: AWS::Lambda::Function
     Properties:
@@ -550,9 +703,9 @@ Resources:
                         - MasterPublicDNS
                     - ":8998/batches'"
               - "  payload = {"
-              - "    'file' : 's3://aws-data-lake-workshop/emr-lab/emr-lab-assembly-0.1.jar',"
+              - "    'file' : 's3://aws-data-lake-workshop/emr-module/emr-lab/emr-lab-assembly-1.0.jar',"
               - "    'className' : 'ValueZone',"
-              - "    'args' : [event.get('rawRidesTarget'),event.get('valueZonesTarget')]"
+              - "    'args' : [event.get('mergeZoneRides'),event.get('valueZones')]"
               - "  }"
               - "  res = requests.post(url, data = json.dumps(payload), headers = headers,
               verify = False)"
@@ -573,114 +726,231 @@ Resources:
     Type: AWS::StepFunctions::StateMachine
     Properties:
       DefinitionString:
-        Fn::Join:
-          - "\n"
-          - - "{"
-            - '   "Comment": "Spark ETL State Machine",'
-            - '   "StartAt": "rawRide Job",'
-            - '   "States": {'
-            - '       "rawRide Job": {'
-            - '           "Type": "Task",'
-            - Fn::Join:
-                - ''
-                - - '           "Resource": "'
-                  - Fn::GetAtt:
-                      - rawRideJobSubmitFunction
-                      - Arn
-                  - "\","
-            - '           "ResultPath": "$.jobId",'
-            - '           "Next": "Wait for rawRide job to complete"'
-            - "       },"
-            - '       "Wait for rawRide job to complete": {'
-            - '           "Type": "Wait",'
-            - '           "Seconds": 60,'
-            - '           "Next": "Query rawRide job status"'
-            - "       },"
-            - '       "Query rawRide job status": {'
-            - '           "Type": "Task",'
-            - Fn::Join:
-                - ''
-                - - '           "Resource": "'
-                  - Fn::GetAtt:
-                      - sparkJobStatusFunction
-                      - Arn
-                  - "\","
-            - '           "Next": "rawRide job complete?",'
-            - '           "ResultPath": "$.jobStatus"'
-            - "       },"
-            - '       "rawRide job complete?": {'
-            - '           "Type": "Choice",'
-            - '           "Choices": [{'
-            - '               "Variable": "$.jobStatus",'
-            - '               "StringEquals": "success",'
-            - '               "Next": "valueZone Job"'
-            - "           },{"
-            - '               "Variable": "$.jobStatus",'
-            - '               "StringEquals": "dead",'
-            - '               "Next": "rawRide job failed"'
-            - "           }],"
-            - '           "Default": "Wait for rawRide job to complete"'
-            - "       },"
-            - '       "rawRide job failed": {'
-            - '           "Type": "Fail",'
-            - '           "Error": "rawRide Job",'
-            - '           "Cause": "rawRide job job did not complete successfully.
-             Please check logs."'
-            - "       },"
-            - '       "valueZone Job": {'
-            - '           "Type": "Task",'
-            - Fn::Join:
-                - ''
-                - - '           "Resource": "'
-                  - Fn::GetAtt:
-                      - valueZoneJobSubmitFunction
-                      - Arn
-                  - "\","
-            - '           "ResultPath": "$.jobId",'
-            - '           "Next": "Wait for valueZone job to complete"'
-            - "       },"
-            - '       "Wait for valueZone job to complete": {'
-            - '           "Type": "Wait",'
-            - '           "Seconds": 60,'
-            - '           "Next": "Query valueZone job status"'
-            - "       },"
-            - '       "Query valueZone job status": {'
-            - '           "Type": "Task",'
-            - Fn::Join:
-                - ''
-                - - '           "Resource": "'
-                  - Fn::GetAtt:
-                      - sparkJobStatusFunction
-                      - Arn
-                  - "\","
-            - '           "Next": "valueZone job complete?",'
-            - '           "ResultPath": "$.jobStatus"'
-            - "       },"
-            - '       "valueZone job complete?": {'
-            - '       "Type": "Choice",'
-            - '       "Choices": [{'
-            - '               "Variable": "$.jobStatus",'
-            - '               "StringEquals": "success",'
-            - '               "Next": "valueZone job finished"'
-            - "           },{"
-            - '               "Variable": "$.jobStatus",'
-            - '               "StringEquals": "dead",'
-            - '               "Next": "valueZone job failed"'
-            - "           }],"
-            - '           "Default": "Wait for valueZone job to complete"'
-            - "       },"
-            - '       "valueZone job failed": {'
-            - '           "Type": "Fail",'
-            - '           "Error": "valueZone Job",'
-            - '           "Cause": "valueZone job did not complete successfully.
-             Please check logs."'
-            - "       },"
-            - '       "valueZone job finished": {'
-            - '           "Type": "Pass",'
-            - '           "End": true'
-            - "       }"
-            - "   }"
-            - "}"
+        Fn::Sub:
+          - |-
+            {
+              "Comment": "Raw ride taxi analysis pipeline on Amazon EMR with AWS Step Functions",
+              "StartAt": "Pre-process",
+              "States": {
+                "Pre-process": {
+                  "Type": "Pass",
+                  "Next": "Parallel raw ride Jobs"
+                },
+                "Parallel raw ride Jobs": {
+                  "Type": "Parallel",
+                  "Branches": [
+                    {
+                      "StartAt": "Prep for yellow raw data",
+                      "States": {
+                        "Prep for yellow raw data": {
+                          "Type": "Pass",
+                          "Result": {"rawRidesColor" : "yellow","rawRidesSource" : "${yellowSource}","rawRidesTarget" : "${yellowRawRides}"},
+                          "Next": "Yellow rawRide job launch"
+                        },
+                        "Yellow rawRide job launch": {
+                          "Type": "Task",
+                          "Resource": "${rawRideJobSubmitFunctionArn}",
+                          "ResultPath": "$.jobId",
+                          "Next": "Wait for yellow rawRide job to complete"
+                        },
+                        "Wait for yellow rawRide job to complete": {
+                          "Type": "Wait",
+                          "Seconds": 60,
+                          "Next": "Query yellow rawRide job status"
+                        },
+                        "Query yellow rawRide job status": {
+                          "Type": "Task",
+                          "Resource": "${sparkJobStatusFunctionArn}",
+                          "ResultPath": "$.jobStatus",
+                          "Next": "Yellow rawRide job complete?"
+                        },
+                        "Yellow rawRide job complete?": {
+                          "Type": "Choice",
+                          "Choices": [
+                            {
+                              "Variable": "$.jobStatus",
+                              "StringEquals": "success",
+                              "Next": "Yellow rawRide job success"
+                            },
+                            {
+                              "Variable": "$.jobStatus",
+                              "StringEquals": "dead",
+                              "Next": "Yellow rawRide job failed"
+                            }
+                          ],
+                          "Default": "Wait for yellow rawRide job to complete"
+                        },
+                        "Yellow rawRide job failed": {
+                          "Type": "Fail",
+                          "Error": "Yellow rawRide Job",
+                          "Cause": "Yellow rawRide job job did not complete successfully. Please check logs."
+                        },
+                        "Yellow rawRide job success": {
+                          "Type": "Pass",
+                          "End": true
+                        }
+                      }
+                    },
+                    {
+                      "StartAt": "Prep for green raw data",
+                      "States": {
+                        "Prep for green raw data": {
+                          "Type": "Pass",
+                          "Result": {"rawRidesColor" : "green","rawRidesSource" : "${greenSource}","rawRidesTarget" : "${greenRawRides}"},
+                          "Next": "Green rawRide job launch"
+                        },
+                        "Green rawRide job launch": {
+                          "Type": "Task",
+                          "Resource": "${rawRideJobSubmitFunctionArn}",
+                          "ResultPath": "$.jobId",
+                          "Next": "Wait for green rawRide job to complete"
+                        },
+                        "Wait for green rawRide job to complete": {
+                          "Type": "Wait",
+                          "Seconds": 60,
+                          "Next": "Query green rawRide job status"
+                        },
+                        "Query green rawRide job status": {
+                          "Type": "Task",
+                          "Resource": "${sparkJobStatusFunctionArn}",
+                          "ResultPath": "$.jobStatus",
+                          "Next": "Green rawRide job complete?"
+                        },
+                        "Green rawRide job complete?": {
+                          "Type": "Choice",
+                          "Choices": [
+                            {
+                              "Variable": "$.jobStatus",
+                              "StringEquals": "success",
+                              "Next": "Green rawRide job success"
+                            },
+                            {
+                              "Variable": "$.jobStatus",
+                              "StringEquals": "dead",
+                              "Next": "Green rawRide job failed"
+                            }
+                          ],
+                          "Default": "Wait for green rawRide job to complete"
+                        },
+                        "Green rawRide job failed": {
+                          "Type": "Fail",
+                          "Error": "Green rawRide Job",
+                          "Cause": "Green rawRide job job did not complete successfully. Please check logs."
+                        },
+                        "Green rawRide job success": {
+                          "Type": "Pass",
+                          "End": true
+                        }
+                      }
+                    }
+                  ],
+                  "Next": "Prep for mergeZone job"
+                },
+                "Prep for mergeZone job": {
+                  "Type": "Pass",
+                  "Result": {"yellowRawRides" : "${yellowRawRides}","greenRawRides" : "${greenRawRides}","zoneSource" : "${zoneSource}","mergeZoneRides" : "${mergeZoneRides}" },
+                  "Next": "MergeZoneRide job"
+                },
+                "MergeZoneRide job": {
+                  "Type": "Task",
+                  "Resource": "${mergeZoneRideSubmitFunctionArn}",
+                  "ResultPath": "$.jobId",
+                  "Next": "Wait for mergeZoneRide job to complete"
+                },
+                "Wait for mergeZoneRide job to complete": {
+                  "Type": "Wait",
+                  "Seconds": 60,
+                  "Next": "Query mergeZoneRide job status"
+                },
+                "Query mergeZoneRide job status": {
+                  "Type": "Task",
+                  "Resource": "${sparkJobStatusFunctionArn}",
+                  "ResultPath": "$.jobStatus",
+                  "Next": "MergeZoneRide job complete?"
+                },
+                "MergeZoneRide job complete?": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.jobStatus",
+                      "StringEquals": "success",
+                      "Next": "Prep for valueZone job"
+                    },
+                    {
+                      "Variable": "$.jobStatus",
+                      "StringEquals": "dead",
+                      "Next": "MergeZoneRide job failed"
+                    }
+                  ],
+                  "Default": "Wait for mergeZoneRide job to complete"
+                },
+                "MergeZoneRide job failed": {
+                  "Type": "Fail",
+                  "Error": "MergeZoneRide Job",
+                  "Cause": "MergeZoneRide job did not complete successfully. Please check logs."
+                },
+                "Prep for valueZone job": {
+                  "Type": "Pass",
+                  "Result": {"mergeZoneRides" : "${mergeZoneRides}","valueZones" : "${valueZones}" },
+                  "Next": "ValueZone job"
+                },
+                "ValueZone job": {
+                  "Type": "Task",
+                  "Resource": "${valueZoneJobSubmitFunctionArn}",
+                  "ResultPath": "$.jobId",
+                  "Next": "Wait for valueZone job to complete"
+                },
+                "Wait for valueZone job to complete": {
+                  "Type": "Wait",
+                  "Seconds": 60,
+                  "Next": "Query valueZone job status"
+                },
+                "Query valueZone job status": {
+                  "Type": "Task",
+                  "Resource": "${sparkJobStatusFunctionArn}",
+                  "ResultPath": "$.jobStatus",
+                  "Next": "ValueZone job complete?"
+                },
+                "ValueZone job complete?": {
+                  "Type": "Choice",
+                  "Choices": [
+                    {
+                      "Variable": "$.jobStatus",
+                      "StringEquals": "success",
+                      "Next": "Pipeline finished"
+                    },
+                    {
+                      "Variable": "$.jobStatus",
+                      "StringEquals": "dead",
+                      "Next": "ValueZone job failed"
+                    }
+                  ],
+                  "Default": "Wait for valueZone job to complete"
+                },
+                "ValueZone job failed": {
+                  "Type": "Fail",
+                  "Error": "ValueZone Job",
+                  "Cause": "ValueZone job did not complete successfully. Please check logs."
+                },
+                "Pipeline finished": {
+                  "Type": "Pass",
+                  "End": true
+                }
+              }
+            }
+          - {
+            yellowSource : "s3://nyc-tlc/trip data/yellow_tripdata_2018*.csv",
+            yellowRawRides: !Join [ "/", [ "s3:/", !Ref emrDataOutputBucket, "yellowRawRides" ] ],
+            greenSource: "s3://nyc-tlc/trip data/green_tripdata_2018*.csv",
+            greenRawRides: !Join [ "/", [ "s3:/", !Ref emrDataOutputBucket, "greenRawRides" ] ],
+            rawRideJobSubmitFunctionArn: !GetAtt rawRideJobSubmitFunction.Arn,
+            zoneSource: "s3://nyc-tlc/misc/taxi _zone_lookup.csv",
+            sparkJobStatusFunctionArn: !GetAtt sparkJobStatusFunction.Arn,
+            mergeZoneRides: !Join [ "/", [ "s3:/",!Ref emrDataOutputBucket, "mergeZoneRides" ] ],
+            mergeZoneRideSubmitFunctionArn: !GetAtt mergeZoneRideJobSubmitFunction.Arn,
+            valueZones: !Join [ "/", [ "s3:/",!Ref emrDataOutputBucket, "valueZones" ] ],
+            valueZoneJobSubmitFunctionArn: !GetAtt valueZoneJobSubmitFunction.Arn
+          }
       RoleArn:
         Fn::GetAtt:
           - stepFunctionsStateExecutionRole
@@ -693,6 +963,6 @@ Outputs:
   EMRLogBucket:
     Description: EMR log dir
     Value: !Ref emrLogBucket
-  EMRPrivateKey:
-    Description: EMR private key path in parameter store
-    Value: !Ref emrPrivateKey
+
+
+

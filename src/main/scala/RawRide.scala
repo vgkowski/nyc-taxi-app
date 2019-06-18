@@ -87,6 +87,7 @@ object RawRide {
         .repartition($"year",$"month")
         .sortWithinPartitions("day")
         .write
+        .mode("OVERWRITE")
         .partitionBy("year","month")
         .parquet(target)
     }

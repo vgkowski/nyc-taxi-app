@@ -1,6 +1,6 @@
 name := "emr-lab"
 
-version := "0.1"
+version := "1.0"
 
 scalaVersion := "2.11.12"
 
@@ -9,11 +9,11 @@ resolvers += "Typesafe Repository" at "http://repo.typesafe.com/typesafe/release
 // additional librairies
 libraryDependencies ++= {
   Seq(
-    "org.apache.spark" %% "spark-core" % "2.4.0" % "provided",
-    "org.apache.spark" %% "spark-sql" % "2.4.0" % "provided",
+    "org.apache.spark" %% "spark-core" % "2.4.2" % "provided",
+    "org.apache.spark" %% "spark-sql" % "2.4.2" % "provided",
     "org.apache.hadoop" % "hadoop-aws" % "2.7.1",
     "com.amazonaws" % "aws-java-sdk" % "1.7.4",
-    "com.holdenkarau" %% "spark-testing-base" % "2.4.0_0.11.0" % Test,
+    "com.holdenkarau" %% "spark-testing-base" % "2.4.2_0.12.0" % Test,
     "org.scalactic" %% "scalactic" % "3.0.7",
     "org.scalatest" %% "scalatest" % "3.0.7" % Test
   )

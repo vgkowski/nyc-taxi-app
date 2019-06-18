@@ -57,6 +57,8 @@ object ValueZone {
     val aggregateQuery = zoneAttractiveness
       .repartition(1)
       .sortWithinPartitions($"pickup_hour")
-      .write.parquet(valueZonesTarget)
+      .write
+      .mode("OVERWRITE")
+      .parquet(valueZonesTarget)
   }
 }
