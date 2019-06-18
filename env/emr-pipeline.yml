@@ -4,7 +4,7 @@ Description: Cloudformation Template to spin up prod pipeline for EMR lab
 Parameters:
   masterNodeType:
     Type: String
-    Default: m5.large
+    Default: m5.xlarge
   workerNodeType:
     Type: String
     Default: m5.2xlarge
