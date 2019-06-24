@@ -41,6 +41,6 @@ class RawRideSpec extends FunSuite with DataFrameSuiteBase with SharedSparkConte
   }
 
   override def afterAll(): Unit = {
-    //Try(Path("src/test/resources/results/").deleteRecursively)
+    Try(Path("src/test/resources/results/").deleteRecursively)
   }
 }

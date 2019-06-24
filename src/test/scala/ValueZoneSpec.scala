@@ -26,6 +26,6 @@ class ValueZoneSpec extends FunSuite with DataFrameSuiteBase with SharedSparkCon
   }
 
   override def afterAll(): Unit = {
-    //Try(Path("src/test/resources/results/").deleteRecursively)
+    Try(Path("src/test/resources/results/").deleteRecursively)
   }
 }
