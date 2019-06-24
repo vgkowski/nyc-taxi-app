@@ -1,11 +1,11 @@
 echo "-----------------------------------------------"
 echo "###  Installing Scala...                    ###"
 echo "-----------------------------------------------"
-wget https://downloads.lightbend.com/scala/2.12.4/scala-2.12.4.tgz
-tar xvf scala-2.12.4.tgz
-rm https://downloads.lightbend.com/scala/2.12.4/scala-2.12.4.tgz
-mv scala-2.12.4 ~/scala-2.12.4
-echo SCALA_HOME="$HOME/scala-2.12.4" >> ~/.bash_profile
+wget https://downloads.lightbend.com/scala/2.11.7/scala-2.11.7.tgz
+tar xvf scala-2.11.7.tgz
+rm https://downloads.lightbend.com/scala/2.11.7/scala-2.11.7.tgz
+mv scala-2.11.7 ~/scala-2.11.7
+echo SCALA_HOME="$HOME/scala-2.11.7" >> ~/.bash_profile
 echo PATH=\"\$PATH:\$SCALA_HOME/bin\" >> ~/.bash_profile
 echo "Done."
 

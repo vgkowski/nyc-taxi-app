@@ -28,6 +28,6 @@ class MergeZoneRideSpec extends FunSuite with DataFrameSuiteBase with SharedSpar
   }
 
   override def afterAll(): Unit = {
-    Try(Path("src/test/resources/results/").deleteRecursively)
+    //Try(Path("src/test/resources/results/").deleteRecursively)
   }
 }
